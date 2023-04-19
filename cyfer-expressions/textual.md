@@ -1,4 +1,4 @@
-# Cyfer Expressions - Textual
+# Cyfer Expressions - Syntax
 
 Cyfer Expressions are a simple, human readable way to compose and structure data for use by the computer. They consist of **Atoms** and **Sequences**. **Atoms** represent primitive forms of data. **Sequences** are compositions of **Atoms** and other **Sequences**. In some sense, **Atoms** are to words as **Sequences** are to sentences or paragraphs.
 
@@ -8,18 +8,53 @@ Cyfer Expressions are a way to structure data and convey meaning. In general, a 
 
 The term "Expression" is intentional since they encode meaning similar to how we use language generally. Atoms are to Cyfer Expressions as words are to English. Sequences are to Cyfer Expressions as sentences or paragraphs are to English.
 
-## Examples
+# Data Types
 
-Numbers:
-`1`, `100`, `2.8`, `.89`, `1.89e10`, `1.97e+12`, `-10.32e-21`, `100/3`
+## Numbers
+Cyfer is defined with a full numeric tower (however not every host environment has full support). Notably, we have Integers and Floating-point numbers.
 
-Symbols:
+Here are some integers:
+`-1`, `0`, `1`, `2`, ... `1000000000000000000000000000000000000`
 
-Strings:
+Floating point numbers are distinguished by their decimal point:
+`1.` is not the same as `1`.
 
-Identifiers:
+Here are some floating point numbers:
+`-1.0`, `0.`, `2.8e-12`, `.1`, `1.0`, `1.28e+20`
 
-Tuples:
+## Text
+
+Text is Unicode encoded text. Text is written between double quotes `""`. Text can include any legal sequence of Unicode code-points except for the double quote character or backslash `\` (which is used for escaping). To encode the string `"`, we must type `"\""`. To encode the string `\`, we must type `"\\"`. Note that there are other escape sequences as well.
+
+## Symbols
+
+Symbols are to Cyfer as words are to English. They are essentially named objects. The following are symbols:
+
+`symbol` `word` `is-a?` `no!` `camelCase` `snake_case` `kebab-case`
+
+Symbols are how we encode meaning into programs and data. But any time we use names we run into the issue of name collisions. To address this, we add the notion of qualification (which we'll come back to). Another issue is the notion of use vs mention. I.e. how do we talk about a specific symbol without using what it refers to? For this, we bring the notion of literal symbols.
+
+### Qualification
+
+To address the issue of name collisions, we introduce a new term: `Dictionary`. Much as a physical dictionary is a map from words to definitions, so is a cyfer dictionary a map from symbols to definitions. Qualification then is just a way to encode the notion of "the word 'define' with respect to the programming language 'cyfer-scheme'". Cyfer uses the `/` character to encode this. The symbol `cyfer-scheme/define` is read as "the symbol 'define' with respect to the dictionary named 'cyfer-scheme'".
+
+Of course, a problem still arises in that, what specifically do we mean by the dictionary 'cyfer-scheme'? There's a bit of an infinite regress when it comes to naming. To help manage this somewhat, Cyfer uses something called hash qualification.
+
+### Hash Qualification
+
+A common aspect of modern software development is the use of distributed source code repositories. These systems are used to track the revision history of a codebase. They do this by using cryptographic hash functions to identify specific snapshots of the source tree based on their content. Since cryptographic digests aren't exactly readable, they allow users to assign names to specific snapshots, which typically become referred to as branches. Cyfer integrates this idea directly into its language.
+
+A symbol is hash qualified when it looks like this:
+`blake3s#deadbee...f5/define`.
+This reads as: the symbol `define` with respect to the persistent dictionary identified by the hash deadbee...f5 under the blake3s hash function. A persistent dictionary being a snapshot of a specific dictionary (set of symbol definitions).
+
+### Literal Symbols
+
+The distinguish between use and mention, the Cyfer reader uses the terms bare vs literal symbols. A literal symbol is any symbol beginning or ending with a colon, like this: `:atom` or `atom:`. (This is a syntactic convenience, both of those refer to the symbol with the name "atom" and are considered equivalent.) By contrast, `atom` is a bare symbol and denotes the use of the symbol named "atom".
+
+Literal symbols evaluate to themselves, bare symbols evaluate to their binding.
+
+###
 
 ## Reading Cyfer Expressions
 
