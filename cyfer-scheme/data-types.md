@@ -58,7 +58,7 @@ Similar to integers, ratios may be notated in binary, octal, and hexadecimal:
 
 ### Floating Point
 
-Floating point numbers approximate representations of real numbers, using an integer with a fixed precision known as the significand, scaled by an integer exponent of a fixed base. Floating point numbers are ordinarily written in decimal notation. If a number has a decimal in it, it will be read as a floating point number. More formally, floating point numbers follow correspond to the following grammar:
+Floating point numbers approximate representations of real numbers, using an integer with a fixed precision known as the significand, scaled by an integer exponent of a fixed base. Floating point numbers are ordinarily written in decimal notation. If a number has a decimal in it, it will be read as a floating point number. More formally, floating point numbers correspond to the following grammar:
 ```
 floating-point ::= [sign] {digit}* decimal-point {digit}+ [exponent]
                  | [sign] {digit}+ [decimal-point {digit}* ] exponent
@@ -72,4 +72,70 @@ The exponent-marker denotes the type of the floating-point number. e or E, denot
 
 ## Characters and Text
 
+Characters and Text are representations of printed glyphs such as letters or text formatting operations. Notably, CyferScheme uses Unicode and implementations are expected to be Unicode-compliant. Conceptually, a Character represents a single *extended grapheme cluster*. An extended grapheme cluster is a series of Unicode scalars that combine to create a single human-readable character. Text is a sequence of Characters.
 
+Text is written as a sequence of Characters between a pair of double quotes. Characters are written the same way (they are simply a Text of length 1).
+```
+"A" ; The character A, Unicode Scalar U+0041
+"😂" ; The character "face with tears of joy", Unicode Scalar U+1F602
+"é" ; The character é, an extended grapheme cluster U+0065 U+0301
+"👩‍👩‍👧‍👧" ; The character "family with two mothers and two daughters", an extended grapheme cluster U+1F469 U+200D U+1F469 U+200D U+1F467 U+200D U+1F467
+"A string of text" ; A Text of 16 characters
+"A string with 👩‍👩‍👧‍👧" ; A Text of 15 characters
+```
+
+Additionally, Characters may be encoded using escape sequences. Escape sequences begin with the single escape character `\`. The simplest escape sequences are as follows:
+```
+"\\" ; The backslash character
+"\"" ; The double quote character
+"\0" ; The Null character
+"\t" ; Horizontal Tab
+"\n" ; Line feed
+"\r" ; Carriage return
+```
+
+Additionally, Unicode scalars can be encoded as `\u{n}` where *n* is 1-6 hexadecimal digits.
+
+```
+"\u{24}" => $
+"\u{2665}" => ♥
+"\u{1F496}" => 💖
+"\u{1F1FA}\u{1F1F8}" => 🇺🇸
+```
+
+## Symbols
+
+Symbols are a form of immutable String representing a name or word. They are used as nominal identifiers in that they are uniquely identifiable by their name. That is, there can only be a single Symbol with a given name.
+
+Symbols are written as a sequence of characters prefixed or suffixed with a colon. Symbols are case sensitive, but where the colon appears does not matter. Examples:
+```
+:symbol ; The symbol named "symbol".
+symbol: ; Also the symbol named "symbol".
+:Symbol ; The symbol named "Symbol", which is not the same as "symbol"
+:thisIsASymbol
+this-is-also-a-symbol:
+:as_is_this
+```
+
+Additionally, while symbols can have any String as a name, some characters are reserved by the Cyfer reader for syntactic purposes. To use those characters, the symbol must be written as a String prefixed or suffixed by a colon like so:
+```
+:"symbol" ; The symbol named "symbol" (like above).
+"Symbol": ; The symbol named "Symbol"
+:"This is a symbol with whitespace!" ; A symbol with whitespace in its name
+:"\"" ; The symbol named "\"" (using the same escape sequences as Strings)
+```
+
+In general, a Symbol can be written without quotes if it conforms to the following grammar:
+```
+symbol ::= : start {continuation}*
+         | start {continuation}* :
+start ::= supplementary | ID_Start Unicode Character
+continuation ::= supplementary | ID_Continue Unicode Character
+supplementary ::= ? | ! | & | + | - | = | < | > | _
+```
+
+For example:
+```
+:&keys ; The symbol named "&keys"
+:what?! ; The symbol named "what?!"
+```
