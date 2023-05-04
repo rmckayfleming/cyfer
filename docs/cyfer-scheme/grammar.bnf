@@ -1,0 +1,46 @@
+<exprs> := <whitespace> expr*;
+<expr> := sequence | atom;
+<sequence> := form | tuple | map;
+<atom> := nil | boolean | number | text | symbol / identifier; (* Notice the use of precedence, an identifier is pretty much anything else. *)
+
+form := <'('> <whitespace> exprs <')'>;
+tuple := <'['> <whitespace> exprs <']'>;
+map := <'{'> <whitespace> exprs <'}'>;
+
+nil := <"#n"> | <"#nil">;
+
+<boolean> := true | false;
+true := <"#t"> | <"#true">;
+false := <"#f"> | <"#false">;
+
+(* Notice that we're using an ordered choice, integers have precedence over floats *)
+<number> := integer / ratio / float;
+
+<integer> := decimal-integer | binary-integer | hex-integer | octal-integer;
+decimal-integer := sign? #"\d+";
+binary-integer := sign? #"0b[01]+";
+hex-integer := sign? #"0x\p{XDigit}+";
+octal-integer := sign? #"0o[0-7]+";
+
+ratio := sign? #"\d+" <"/"> #"\d+";
+
+(* Todo: Extend this with other floating point types *)
+float := sign? #"\d+" float-fraction? float-exponent?;
+<float-fraction> := "." #"\d+";
+<float-exponent> := ("e" | "E") sign? #"\d+";
+
+text := <'"'> quoted-text? <'"'>;
+<quoted-text> := (escaped-character | #"[^\"\\]")*;
+escaped-character := "\\0" | "\\\\" | "\\t" | "\\n" | "\\r" | '\\"' | "\\u{" unicode-scalar-digits "}";
+unicode-scalar-digits := #"\p{XDigit}{1,6}";
+
+<symbol> := bare-symbol | quoted-symbol;
+bare-symbol := <":"> identifier-characters* | identifier-characters* <":">;
+quoted-symbol := <":"> <text>;
+
+(* Todo: Add escaped identifiers *)
+identifier = identifier-characters+;
+
+whitespace = #"\s*"
+<sign> = "-" | "+";
+<identifier-characters> = #"[\p{ID_Continue}?!&=<>+-]"

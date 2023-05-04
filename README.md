@@ -1,7 +1,3 @@
 # Cyfer
 
-This repository outlines the core components of the Cyfer computing environment.
-
-## Cyfer Expressions
-
-Cyfer Expressions are an extension of S-Expressions with a few other common data structures. They come in textual and byte-encoded variants.
+Cyfer is an interpersonal computing environment. It consists of a programming language (CyferScheme), a binary data interchange format, and a distributed persistence layer. The "docs" directory contains written descriptions of the system. The "impls" directory contains implementations of Cyfer in different host environments. The "test" directory contains common example code and data used to test the implementations.
