@@ -1,20 +1,20 @@
 (ns cyfer.parser
   (:require [instaparse.core :as insta]
             [clojure.string :as str]
-            [cyfer.regex :as re]
             [clojure.java.io :as io]))
+; Load the grammar file into a var.
+(def raw-grammar (slurp (io/resource "grammar.bnf")))
+(def id-start-regex (slurp (io/resource "id-start.regex")))
+(def id-continue-regex (slurp (io/resource "id-continue.regex")))
 
-(def raw-grammar (slurp (io/resource "grammar.ebnf")))
+; We have to fix the grammar a bit to account for issues with Java's regex engine.
+; Specifically, Java only supports 2.1 of the Level 2 Extended Unicode Support
+; as defined in https://unicode.org/reports/tr18/
+; Because of that, we can't use ID_Start and ID_Continue in the character properties
+; regexes. As such, we need to replace those with a regex that's been manually generated.
 (def grammar
-  (let [id-start-regex (str "(?:" (re/ranges-to-str re/id-start-ranges) ")")
-        id-continue-regex (str "(?:" (re/ranges-to-str re/id-continue-ranges) ")")] 
-    (-> raw-grammar
-        (str/replace "\\p{ID_Start}" id-start-regex)
-        (str/replace "\\p{ID_Continue}" id-continue-regex))))
+  (-> raw-grammar
+      (str/replace "\\p{ID_Start}" id-start-regex)
+      (str/replace "\\p{ID_Continue}" id-continue-regex)))
 
-(def grammar
-  (slurp (-> "grammar.ebnf" io/resource)))
-
-(def parser (insta/parser grammar))
-
-(def test-input (slurp (-> "test-input.cyf" io/resource)))
+(def parse (insta/parser grammar))
