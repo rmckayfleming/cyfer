@@ -15,7 +15,7 @@
      (are [input# output#] (= (read input#) output#)
        ~@tests)))
 
-(deftest parse
+(deftest Parse
   (parses "nils"
                  "#n"  [[:nil]]
                  "#nil" [[:nil]])
@@ -99,7 +99,7 @@
                                    [:map
                                     [:identifier "layer-2"]]]]))
 
-(deftest read
+(deftest Read
   (reads "nils"
           "#n" [nil]
           "#nil" [nil])

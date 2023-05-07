@@ -1,0 +1,20 @@
+<program> := <WHITESPACE?> expr;
+<expr> := (token | delimited-sequence) <WHITESPACE?>;
+
+<delimited-sequence> := form | tuple | map | text;
+form := <'('> <WHITESPACE?> expr*  <')'>;
+tuple := <'['> <WHITESPACE?> expr* <']'>;
+map := <'{'> <WHITESPACE?> expr* <'}'>;
+
+token := (escaped-token | TOKEN)+;
+escaped-token := <'|'> escaped-token-contents? <'|'>;
+<escaped-token-contents> := (escaped-token-character | #"[^|\\]+")*
+escaped-token-character := "\\0" | "\\\\" | "\\t" | "\\n" | "\\r" | "\\|" | "\\u{" UNICODE-SCALAR-DIGITS "}";
+
+text := <'"'> text-contents? <'"'>;
+<text-contents> := (escaped-text-character | #"[^\"\\]*")*;
+escaped-text-character := "\\0" | "\\\\" | "\\t" | "\\n" | "\\r" | '\\"' | "\\u{" UNICODE-SCALAR-DIGITS "}";
+
+<WHITESPACE> := #"\s+";
+<TOKEN> := #"[^\s{}\[\]\(\)\"|]+";
+<UNICODE-SCALAR-DIGITS> := #"\p{XDigit}{1,6}";
