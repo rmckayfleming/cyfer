@@ -6,6 +6,7 @@
 .factorypath
 .hg/
 .hgignore
+.idea/
 .java-version
 .lein-*
 .lsp/.cache

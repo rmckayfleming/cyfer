@@ -6,7 +6,7 @@
 
 (defn- end-of-stream? [c] (= -1 c))
 (defn- whitespace? [c] (Character/isWhitespace c))
-(defn- double-quote? [c] (= (int \") c))
+(defn- double-quote? [c] (= c 0x22))
 (defn- escape-character? [c] (= (int \\) c))
 (defn- left-curly-brace? [c] (= (int \{) c))
 (defn- right-curly-brace? [c] (= (int \}) c))
@@ -26,35 +26,35 @@
             (loop [head (.read stream)
                    digits []]
               (cond
-                ; First check if we accidentally ran out of input.
+                ;; First check if we accidentally ran out of input.
                 (end-of-stream? head) (throw (ex-info (str "Unexpected end of input while reading a unicode scalar sequence in a string.") {})) 
                 
-                ; Next check to see if this is the end of the scalar digits
+                ;; Next check to see if this is the end of the scalar digits
                 (right-curly-brace? head)
                 (if (> (count digits) 0)
                   (Integer/parseInt (chars->str digits) 16)
                   (throw (ex-info "Unexpected '}' while reading a unicode scalar sequence. Expected 1 to 6 hexadecimal digits." {})))
                 
-                ; If we didn't get an ending curly brace and we already have 6 digits, then the scalar is ill-formed.
+                ;; If we didn't get an ending curly brace and we already have 6 digits, then the scalar is ill-formed.
                 (>= (count digits) 6) (throw (ex-info (str "Unexpected character " (char head) " while reading a unicode scalar sequence. The scalar has too many digits.") {}))
 
-                ; If it's a hex digit, accumulate it and continue.
+                ;; If it's a hex digit, accumulate it and continue.
                 (hex-digit? head) (recur (.read stream) (conj digits head))
 
-                ; Anything else is an error
+                ;; Anything else is an error
                 :else (throw (ex-info (str "Unexpected character " (char head) " while reading a unicode scalar sequence. Expected a hex digit or '}'.") {}))))))
         
         read-escaped-character
         (fn []
           (let [head (.read stream)]
-            (case (char head)
-              \\ (int \\)
-              \" (int \")
-              \n (int \newline)
-              \r (int \return)
-              \t (int \tab)
-              \0 0
-              \u (read-unicode-scalar))))
+            (case head
+              0x5C head ; Backslash
+              0x22 head ; Double Quote
+              0x6E (int \newline) ; n -> newline
+              0x72 (int \return) ; r -> return
+              0x74 (int \tab) ; t -> tab
+              0x30 0 ; 0 -> null
+              0x75 (read-unicode-scalar))))
         
         read-token
         (fn []
@@ -76,10 +76,10 @@
               :else (recur (.read stream) (conj chars head)))))]
     (loop [head (.read stream)]
       (cond
-        ; If we have whitespace, just consume it.
+        ;; If we have whitespace, just consume it.
         (whitespace? head) (recur (.read stream))
 
-        ; When we see a double quote, we consume a string.
+        ;; When we see a double quote, we consume a string.
         (double-quote? head) (read-string)
 
         :else (do
