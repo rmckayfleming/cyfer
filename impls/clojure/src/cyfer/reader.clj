@@ -54,13 +54,22 @@
             (max current-max (count macro-chars)))
           1 *macro-table*))
 
-(defn- resolve-symbol [symbol-text]
-  (loop [table-entries (seq *symbol-resolution-table*)]
-    (if-let [[regex resolver] (first table-entries)]
-      (if (re-matches regex symbol-text)
-        (resolver symbol-text)
-        (recur (rest table-entries)))
-      (symbol symbol-text))))
+(defn- resolve-symbol [symbol-segments]
+  (cond
+    (not= (count symbol-segments) 1)
+    (symbol (apply str (map second symbol-segments)))
+    
+    (= :escaped (ffirst symbol-segments))
+    (symbol (second (first symbol-segments)))
+    
+    :else
+    (let [symbol-text (second (first symbol-segments))]
+      (loop [table-entries (seq *symbol-resolution-table*)]
+        (if-let [[regex resolver] (first table-entries)]
+          (if (re-matches regex symbol-text)
+            (resolver symbol-text)
+            (recur (rest table-entries)))
+          (symbol symbol-text))))))
 
 ;;;
 ;;; Character predicates
@@ -146,40 +155,44 @@
       0x30 0 ; 0 -> null
       0x75 (consume-unicode-scalar rdr)))) ; u -> unicode scalar
 
-(defn consume-symbol-escaped-characters [rdr]
-  (let [first-bar (read-char rdr)]
-    (loop [char (peek-char rdr)
-           chars [first-bar]]
-      (cond
-        (nil? char) (throw (ex-info "Unexpected end of input while reading a symbol with escaped characters." {}))
-
-        (escape-character? char)
-        (do (read-char rdr)
-            (let [char (consume-symbol-escaped-character rdr)]
-              (recur (peek-char rdr) (conj chars char))))
-        
-        (vertical-bar? char)
-        (let [char (read-char rdr)]
-          (conj chars char))
-        
-        :else
-        (let [char (read-char rdr)]
-          (recur (peek-char rdr) (conj chars char)))))))
-
 (defn consume-symbol [rdr]
-  (loop [char (peek-char rdr)
-         symbol-chars []]
-    (cond
-      (or (nil? char) (whitespace? char) (delimiter? char))
-      (apply str (flatten symbol-chars))
+  (let [consume-unescaped-chars
+        (fn []
+          (loop [chars []
+                 next-char (peek-char rdr)]
+            (if (or (nil? next-char) (whitespace? next-char) (delimiter? next-char) (vertical-bar? next-char))
+              (apply str (flatten chars))
+              (recur (conj chars (read-char rdr)) (peek-char rdr)))))
+        
+        consume-escaped-chars
+        (fn []
+          (read-char rdr) ;; Consume the vertical bar, we don't need it.
+          (loop [chars []
+                 next-char (peek-char rdr)]
+            (cond
+              (nil? next-char) (throw (ex-info "Unexpected end of input while reading an escaped symbol." {}))
 
-      (vertical-bar? char)
-      (let [chars (consume-symbol-escaped-characters rdr)]
-        (recur (peek-char rdr) (into [] (concat symbol-chars chars))))
-      
-      :else
-      (let [char (read-char rdr)]
-        (recur (peek-char rdr) (conj symbol-chars char))))))
+              (vertical-bar? next-char)
+              (do (read-char rdr) ;; Consume the vertical bar without collecting it.
+                  (apply str (flatten chars)))
+              
+              (escape-character? next-char)
+              (do (read-char rdr) ;; Consume the \ since the escape sequence won't use it.
+                  (recur (conj chars (consume-symbol-escaped-character rdr)) (peek-char rdr)))
+              
+              :else
+              (recur (conj chars (read-char rdr)) (peek-char rdr)))))]
+    (loop [segments []
+           char (peek-char rdr)]
+      (cond
+        (or (nil? char) (whitespace? char) (delimiter? char))
+        segments
+
+        (vertical-bar? char)
+        (recur (conj segments [:escaped (consume-escaped-chars)]) (peek-char rdr))
+
+        :else
+        (recur (conj segments [:unescaped (consume-unescaped-chars)]) (peek-char rdr))))))
 
 (declare dispatch-read)
 
