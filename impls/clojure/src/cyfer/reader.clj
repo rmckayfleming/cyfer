@@ -2,194 +2,240 @@
   (:refer-clojure :exclude [read read-string])
   (:require [clojure.string :as str]
             [clojure.java.io :as io])
-  (:import [java.io BufferedReader PushbackReader]))
-
-;;;
-;;; Reader Protocol
-;;;
+  (:import [java.io BufferedReader PushbackReader StringReader]))
 
 (defprotocol Reader
   (read-char [reader]
-    "Consumes and returns the next character in the input stream, or nil if the stream has been consumed.")
+    "Consumes and returns the next character in the input stream, nil if there is nothing else.")
   (peek-char [reader]
-    "Returns the next character in the input stream, or nil if the stream has been consumed. Does not consume the character."))
+    "Returns the next character in the input stream without consuming it, nil if there is nothing else.")
+  (read-chars [reader n]
+    "Consumes and returns the next N characters in the input stream. If there are less than N characters available, it will return just those characters.")
+  (peek-chars [reader n]
+    "Returns the next N characters in the input stream without consuming them. If there are less than N characters available, it will return just those characters."))
 
-(deftype StringReader [^String s ^long string-length ^:unsynchronized-mutable ^long current-position]
+(extend-type PushbackReader
   Reader
   (read-char [reader]
-    (when (> string-length current-position)
-      (let [character (nth s current-position)]
-        (set! current-position (inc current-position))
-        character)))
+    (let [next (.read reader)]
+      (if (neg? next)
+        nil
+        (char next))))
   (peek-char [reader]
-    (when (> string-length current-position)
-      (nth s current-position))))
+    (let [next (.read reader)]
+      (if (neg? next)
+        nil
+        (do (.unread reader next)
+            (char next)))))
+  (read-chars [reader n]
+    (loop [n n
+           chars []]
+      (if (= n 0)
+        chars
+        (let [next (.read reader)]
+          (if (neg? next)
+            chars
+            (recur (dec n) (conj chars (char next)))))))) 
+  (peek-chars [reader n]
+    (let [chars (read-chars reader n)]
+      (doseq [char (reverse chars)]
+        (.unread reader (int char)))
+      chars)))
 
-(defn make-string-reader [^String str]
-  (->StringReader str (count str) 0))
+;;;
+;;; Macro and symbol resolution tables.
+;;;
 
-(defn- end-of-stream? [c] (nil? c))
-(defn- whitespace? [c] (Character/isWhitespace (int c)))
-(defn- delimiter? [c]
-  (#{\( \) \[ \] \{ \} (char 0x22)} c))
-(defn- double-quote? [c] (= (int c) 0x22))
-(defn- escape-character? [c] (= \\ c))
-(defn- token-escape-character? [c] (= \| c))
-(defn- left-curly-brace? [c] (= \{ c))
-(defn- right-curly-brace? [c] (= \} c))
-(defn- left-paren? [c] (= \( c))
-(defn- right-paren? [c] (= \) c))
-(defn- left-bracket? [c] (= \[ c))
-(defn- right-bracket? [c] (= \] c))
-(defn- hex-digit? [c] (#{\0 \1 \2 \3 \4 \5 \6 \7 \8 \9 \a \b \c \d \e \f \A \B \C \D \E \F} c))
-(defn- constituent-character? [c]
-  (not (or (delimiter? c) (whitespace? c))))
+(def ^:dynamic *macro-table* {})
+(def ^:dynamic *symbol-resolution-table* [])
 
-(defn- chars->str [vec]
-  (apply str (flatten vec)))
+(defn- longest-macro-table-entry []
+  (reduce (fn [current-max [macro-chars _]]
+            (max current-max (count macro-chars)))
+          1 *macro-table*))
 
-(defn- read-unicode-scalar [stream]
-  (let [head (read-char stream)]
-    (when-not (left-curly-brace? head)
-      (throw (ex-info (str "Unexpected character " head ". Expected a '{'") {})))
-    (loop [head (read-char stream)
+(defn- resolve-symbol [symbol-text]
+  (loop [table-entries (seq *symbol-resolution-table*)]
+    (if-let [[regex resolver] (first table-entries)]
+      (if (re-matches regex symbol-text)
+        (resolver symbol-text)
+        (recur (rest table-entries)))
+      (symbol symbol-text))))
+
+;;;
+;;; Character predicates
+;;;
+
+(defn- whitespace? [char] (Character/isWhitespace char))
+(defn- left-paren? [char] (= char \())
+(defn- right-paren? [char] (= char \)))
+(defn- left-brace? [char] (= char \{))
+(defn- right-brace? [char] (= char \}))
+(defn- left-bracket? [char] (= char \[))
+(defn- right-bracket? [char] (= char \]))
+(defn- double-quote? [char] (= (int char) 34))
+(defn- delimiter? [char]
+  (or (left-paren? char) (right-paren? char)
+      (left-brace? char) (right-brace? char)
+      (left-bracket? char) (right-bracket? char)
+      (double-quote? char)))
+(defn- macro-char? [char]
+  (#{\( \[ \{ \# \' \`} char))
+(defn- escape-character? [char] (= char \\))
+(defn- vertical-bar? [char] (= char \|))
+(defn- hex-digit? [char] (#{\0 \1 \2 \3 \4 \5 \6 \7 \8 \9 \a \b \c \d \e \f \A \B \C \D \E \F} char))
+
+(defn consume-whitespace! [rdr]
+  (when (whitespace? (peek-char rdr)) 
+    (read-char rdr)
+    (recur rdr)))
+
+(defn consume-unicode-scalar [rdr]
+  (let [char (read-char rdr)]
+    (when-not (left-brace? char)
+      (throw (ex-info (str "Unexpected character " char " while reading a unicode scalar sequence. Expected a '{'.") {})))
+    (loop [char (read-char rdr)
            digits []]
       (cond
-        ;; First check if we accidentally ran out of input.
-        (end-of-stream? head) (throw (ex-info (str "Unexpected end of input while reading a unicode scalar sequence in a string.") {}))
+        (nil? char) (throw (ex-info (str "Unexpected end of input while reading a unicode scalar sequence.") {}))
         
-        ;; Next check to see if this is the end of the scalar digits
-        (right-curly-brace? head)
+        (right-brace? char)
         (if (> (count digits) 0)
-          (seq (Character/toChars (Integer/parseInt (chars->str digits) 16)))
+          (seq (Character/toChars (Integer/parseInt (apply str digits) 16)))
           (throw (ex-info "Unexpected '}' while reading a unicode scalar sequence. Expected 1 to 6 hexadecimal digits." {})))
         
-        ;; If we didn't get an ending curly brace and we already have 6 digits, then the scalar is ill-formed.
-        (>= (count digits) 6) (throw (ex-info (str "Unexpected character " head " while reading a unicode scalar sequence. The scalar has too many digits.") {}))
+        (>= (count digits) 6) (throw (ex-info (str "Unexpected character " char " while reading a unicode scalar sequence. Expected 1 to 6 hexadecimal digits.") {}))
         
-        ;; If it's a hex digit, accumulate it and continue.
-        (hex-digit? head) (recur (read-char stream) (conj digits head))
+        (hex-digit? char) (recur (read-char rdr) (conj digits char))
         
-        ;; Anything else is an error
-        :else (throw (ex-info (str "Unexpected character " head " while reading a unicode scalar sequence. Expected a hexadecimal digit or '}'.") {}))))))
+        :else (throw (ex-info (str "Unexpected character " char " while reading a unicode scalar sequence. Expected a hexadecimal digit or '}'.") {}))))))
 
-(defn- read-escaped-character-in-string [stream]
-  (let [head (read-char stream)]
-    (case (int head)
-      0x5C head ; Backslash
-      0x22 head ; Double Quote
+(defn consume-text-escaped-character [rdr]
+  (let [char (read-char rdr)]
+    (case (int char)
+      0x5C char ; Backslash
+      0x22 char ; Double Quote
       0x6E \newline ; n -> newline
       0x72 \return ; r -> return
       0x74 \tab ; t -> tab
       0x30 0 ; 0 -> null
-      0x75 (read-unicode-scalar stream))))
+      0x75 (consume-unicode-scalar rdr)))) ; u -> unicode scalar
 
-(defn- read-escaped-character-in-token-escape-sequence [stream]
-  (let [head (read-char stream)]
-    (case (int head)
-      0x5C head ; Backslash
-      0x7C head ; Vertical bar
-      0x6E \newline ; n -> newline
-      0x72 \return ; r -> return
-      0x74 \tab ; t -> tab
-      0x30 0 ; 0 -> null
-      0x75 (read-unicode-scalar stream))))
-
-(defn- read-token-escape-sequence [stream]
-  (loop [head (peek-char stream)
-         token-chars []]
+(defn consume-text [rdr]
+  (loop [char (read-char rdr)
+         text-chars []]
     (cond
-      (end-of-stream? head) (throw (ex-info (str "Unexpected end of input while reading an escaped token sequence.") {}))
-      (token-escape-character? head) (do (read-char stream) token-chars)
-      (escape-character? head) (let [_ (read-char stream)
-                                     the-char (read-escaped-character-in-token-escape-sequence stream)]
-                                 (recur (peek-char stream) (conj token-chars the-char)))
+      (nil? char) (throw (ex-info (str "Unexpected end of input while reading text.") {}))
       
-      :else (let [the-char (read-char stream)]
-              (recur (peek-char stream) (conj token-chars the-char))))))
+      (double-quote? char) (apply str (flatten text-chars))
+      
+      (escape-character? char)
+      (let [char (consume-text-escaped-character rdr)]
+        (recur (read-char rdr) (conj text-chars char)))
+      
+      :else (recur (read-char rdr) (conj text-chars char)))))
 
-(defn- read-token [stream]
-  (loop [head (peek-char stream)
-         token-chars []]
+(defn consume-symbol-escaped-character [rdr]
+  (let [char (read-char rdr)]
+    (case (int char)
+      0x5C char ; Backslash
+      0x7C char ; Vertical Bar
+      0x6E \newline ; n -> newline
+      0x72 \return ; r -> return
+      0x74 \tab ; t -> tab
+      0x30 0 ; 0 -> null
+      0x75 (consume-unicode-scalar rdr)))) ; u -> unicode scalar
+
+(defn consume-symbol-escaped-characters [rdr]
+  (let [first-bar (read-char rdr)]
+    (loop [char (peek-char rdr)
+           chars [first-bar]]
+      (cond
+        (nil? char) (throw (ex-info "Unexpected end of input while reading a symbol with escaped characters." {}))
+
+        (escape-character? char)
+        (do (read-char rdr)
+            (let [char (consume-symbol-escaped-character rdr)]
+              (recur (peek-char rdr) (conj chars char))))
+        
+        (vertical-bar? char)
+        (let [char (read-char rdr)]
+          (conj chars char))
+        
+        :else
+        (let [char (read-char rdr)]
+          (recur (peek-char rdr) (conj chars char)))))))
+
+(defn consume-symbol [rdr]
+  (loop [char (peek-char rdr)
+         symbol-chars []]
     (cond
-      (or (end-of-stream? head) (whitespace? head) (delimiter? head))
-      (symbol (chars->str token-chars))
+      (or (nil? char) (whitespace? char) (delimiter? char))
+      (apply str (flatten symbol-chars))
 
-      (token-escape-character? head)
-      (let [_ (read-char stream)
-            the-chars (read-token-escape-sequence stream)]
-        (recur (peek-char stream) (vec (concat token-chars the-chars)))) 
+      (vertical-bar? char)
+      (let [chars (consume-symbol-escaped-characters rdr)]
+        (recur (peek-char rdr) (into [] (concat symbol-chars chars))))
       
       :else
-      (let [the-char (read-char stream)]
-        (recur (peek-char stream) (conj token-chars the-char))))))
+      (let [char (read-char rdr)]
+        (recur (peek-char rdr) (conj symbol-chars char))))))
 
-(defn- read-string-literal [stream]
-  (loop [head (read-char stream)
-         chars []]
+(declare dispatch-read)
+
+(defn consume-sequence [rdr [name initiator terminator]]
+  (read-chars rdr (count initiator)) ;; First, consume the sequence initiator characters.
+  (loop [elems []]
+    (consume-whitespace! rdr)
+    (let [next-chars (peek-chars rdr (count terminator))]
+      (if (= (apply str next-chars) terminator)
+        (do (read-chars rdr (count terminator))
+            (concat [name] elems))
+        (recur (conj elems (dispatch-read rdr)))))))
+
+(defn- dispatch-macro-character [rdr]
+  (let [find-first (fn [pred col]
+                     (first (filter pred col)))
+        [_ macro-fn] (find-first (fn [[macro-chars _]]
+                                (= macro-chars (apply str (peek-chars rdr (count macro-chars)))))
+                              *macro-table*)]
+    (if macro-fn
+      (macro-fn rdr)
+      (throw (ex-info (str "Unexpected macro character sequence: " (apply str (peek-chars rdr (longest-macro-table-entry))) ".") {})))))
+
+(defn- dispatch-read [rdr]
+  (consume-whitespace! rdr) ;; Consume any leading whitespace
+  (let [dispatch-char (peek-char rdr)]
     (cond
-      (end-of-stream? head) (throw (ex-info "Unexpected end of input while reading string." {}))
-      (double-quote? head) (chars->str chars)
-      (escape-character? head) (let [char (read-escaped-character-in-string stream)]
-                                 (recur (read-char stream) (conj chars char)))
-      :else (recur (read-char stream) (conj chars head)))))
-
-(defn- read-delimited-list [end-predicate ctor]
-  (fn [stream]
-    (loop [dispatch-char (peek-char stream)
-           elems []]
-      (cond
-        (end-of-stream? dispatch-char) (throw (ex-info "Unexpected end of input while reading a form." {}))
-        
-        (whitespace? dispatch-char) (recur (do (read-char stream)
-                                               (peek-char stream))
-                                           elems)
-
-        (end-predicate dispatch-char) (do (read-char stream) (ctor elems))
-
-        :else (let [the-elem (read stream)]
-                (recur (peek-char stream) (conj elems the-elem)))))))
-
-(def read-form (read-delimited-list right-paren? vec))
-(def read-tuple (read-delimited-list right-bracket? vec))
-(def read-map (read-delimited-list right-curly-brace? vec))
+      (macro-char? dispatch-char)
+      (dispatch-macro-character rdr)
+      
+      (double-quote? dispatch-char)
+      (consume-text rdr)
+      
+      (delimiter? dispatch-char)
+      (throw (ex-info (str "Unexpected delimiter '" dispatch-char "'.") {}))
+      
+      :else
+      (resolve-symbol (consume-symbol rdr)))))
 
 (defn read
-  "Takes a STREAM (that derives from a PushbackReader), and returns the first expression."
-  [stream]
-  (loop [dispatch-char (peek-char stream)]
-    (cond
-        ;; If we have whitespace, just consume it.
-      (whitespace? dispatch-char) (recur (do (read-char stream)
-                                             (peek-char stream)))
-
-        ;; When we see a double quote, we consume a string.
-      (double-quote? dispatch-char) (do (read-char stream)
-                                        (read-string-literal stream))
-      
-      (left-paren? dispatch-char) (do (read-char stream)
-                                      (read-form stream))
-      
-      (left-bracket? dispatch-char) (do (read-char stream)
-                                        (read-tuple stream))
-      
-      (left-curly-brace? dispatch-char) (do (read-char stream)
-                                            (read-map stream))
-      
-      (right-paren? dispatch-char) (throw (ex-info "Unexpected ')'" {}))
-      (right-bracket? dispatch-char) (throw (ex-info "Unexpected ']'" {}))
-      (right-curly-brace? dispatch-char) (throw (ex-info "Unexpected '}'" {}))
-
-      :else
-      (read-token stream))))
+  "Takes a stream (that derives from a PushbackReader), and returns the first symbol or symbolic sequence in the stream."
+  [rdr]
+  (binding [*macro-table* {"(" (fn [rdr]
+                                 (consume-sequence rdr [:list "(" ")"]))
+                           "[" (fn [rdr]
+                                 (consume-sequence rdr [:tuple "[" "]"]))
+                           "{" (fn [rdr]
+                                 (consume-sequence rdr [:map "{" "}"]))
+                           "#{" (fn [rdr]
+                                  (consume-sequence rdr [:set "#{" "}"]))}
+            *symbol-resolution-table* [[#"\d+" (fn [text] (Integer/parseInt text))]]]
+    (let [lookahead (longest-macro-table-entry)]
+      (dispatch-read (PushbackReader. rdr lookahead)))))
 
 (defn read-string
-  "Takes a string S, and returns the first expression."
+  "Reads the first symbol or symbolic sequence from the string S."
   [s]
-  (read (make-string-reader s)))
-
-(comment
-  (read-string "identifier")
-  (read-string "\"abc\"")
-  (read-string "\"\\u{1F602}\\\"\"")
-  (read-string "    identifier"))
+  (with-open [rdr (StringReader. s)]
+    (read rdr)))
