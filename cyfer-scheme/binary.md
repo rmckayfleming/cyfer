@@ -29,17 +29,19 @@ Aside: In the following algorithm, all numbers are encoded in little endian orde
 
 1. Read the next byte calling it *B*.
 
-2. If *B* is `00000000`, return Nil.
+2. If *B* is `00000000`, skip it.
 
-3. If *B* is `00000010`, return False.
+3. If *B* is `00000001`, return Nil.
 
-4. If *B* is `00000011`, return True.
+4. If *B* is `00000010`, return False.
 
-5. If *B* is of the form `000001nn`, we begin reading a UTF-8 string. To determine the length of the string in bytes *L*, first look at `nn`. If `nn` is `00`, read a u8 for *L*. If `nn` is `01`, read a u16 for *L*. If `nn` is `10`, read a u32 for *L*. If `nn` is `11`, read a u64 for *L*. Next, read *L* bytes into the string. Return the String.
+5. If *B* is `00000011`, return True.
 
-6. If *B* is of the form `000010nn`, we begin reading a Symbol. To determine the length of the symbol name in bytes *L*, first look at `nn`. If `nn` is `00`, read a u8 for *L*. If `nn` is `01`, read a u16 for *L*. If `nn` is `10`, read a u32 for *L*. If `nn` is `11`, read a u64 for *L*. Next, read *L* bytes as UTF-8 text into the Symbol name. Return the Symbol.
+6. If *B* is of the form `000001nn`, we begin reading a UTF-8 string. To determine the length of the string in bytes *L*, first look at `nn`. If `nn` is `00`, read a u8 for *L*. If `nn` is `01`, read a u16 for *L*. If `nn` is `10`, read a u32 for *L*. If `nn` is `11`, read a u64 for *L*. Next, read *L* bytes into the string. Return the String.
 
-7. If *B* is of the form `0001xxxx`, then we are to read a number.
+7. If *B* is of the form `000010nn`, we begin reading a Symbol. To determine the length of the symbol name in bytes *L*, first look at `nn`. If `nn` is `00`, read a u8 for *L*. If `nn` is `01`, read a u16 for *L*. If `nn` is `10`, read a u32 for *L*. If `nn` is `11`, read a u64 for *L*. Next, read *L* bytes as UTF-8 text into the Symbol name. Return the Symbol.
+
+8. If *B* is of the form `0001xxxx`, then we are to read a number.
 
     a. If `xxxx` is of the form `00tt`, then we are to read a signed integer. If `tt` is `00`, read 1 byte and return it as the integer value. If `tt` is `01`, read 2 bytes and return it as the integer value. If `tt` is `10`, read 4 bytes and return it as the integer value. If `tt` is `11`, read 8 bytes and return it as the integer value.
 
@@ -49,22 +51,40 @@ Aside: In the following algorithm, all numbers are encoded in little endian orde
 
     d. If `xxxx` is of the form `11nn`, we are to read an arbitrary precision integer. To determine the length of the integer in bytes *L*, look at `nn`. For `nn` being `00`, read 1 byte as an unsigned integer for *L*; for `01`, read 2 bytes as an unsigned integer; for `10`, read 4 bytes as an unsigned integer; for `11`, read 8 bytes as an unsigned integer. Then read *L* bytes in little-endian order as an arbitrary precision integer and return it.
 
-8. If *B* is of the form `01xxxxxx`, then we are to read a tuple.
+9. If *B* is of the form `0010xxxx`, then we are to read a cryptographic hash.
 
-    a. If `xxxxxx` is `00nnss`, then it is a tuple of signed integers of size `ss`. Read `size(nn)` bytes to determine the length of the tuple *L*, then read *L* signed integers of `size(ss)`. Return the tuple.
+    a. If `xxxx` is of the form `0000` then we are to read a SHA-256 hash. To determine the length of the hash in bytes, read the next byte.
 
-    b. If `xxxxxx` is `01nnss`, then it is a tuple of unsigned integers of size `ss`. Read `size(nn)` bytes to determine the length of the tuple *L*, then read *L* unsigned integers of `size(ss)`. Return the tuple.
+    b. If `xxxx` is of the form `0001` then we are to read a SHA-512 hash. To determine the lenght of the hash in bytes, read the next byte.
 
-    c. If `xxxxxx` is `10nnss`, then it is a tuple of floating point numbers of size `ss`. Read `size(nn)` bytes to determine the length of the tuple *L*, then read *L* floating point numbers of `size(ss)`. Return the tuple.
+    c. If `xxxx` is of the form `0010` then we are to read a SHA3 hash. To determine the length of the hash in bytes, read the next byte.
 
-    d. If `xxxxxx` is `1100nn`, then it is a tuple of arbitrary types. Read `size(nn)` bytes to determine the length of the tuple *L*. Then repeat step 1 *L* times to read each element of the tuple. Return the tuple.
+    d. If `xxxx` is of the form `0011` then we are to read a Keccak hash. To determine the length of the hash in bytes, read the next byte.
 
-9. If *B* is of the form `001xxxxx`, then we are to read a map.
+    e. If `xxxx` is of the form `0100` then we are to read a BLAKE2b hash. To determine the length of the hash in bytes, read the next byte.
 
-    a. If `xxxxx` is `000nn`, then it is a map of arbitrary key-value types. Read `size(nn)` bytes to determine the length of the map *L*. Now repeat step 1 2*L* times, alternating between keys and values.
+    f. If `xxxx` is of the form `0101` then we are to read a BLAKE2s hash. To determine the length of the hash in bytes, read the next byte.
 
-10. If *B* is `00000001`, then it is a reducible expression. A reducible expression is a pair of two expressions. Read one expression for the head, and another for the tail.
+    g. If `xxxx` is of the form `0110` then we are to read a BLAKE2x hash. To determine the length of the hash in bytes, read the next byte.
 
-11. If *B* is of the form `1xxxxxxx` then it is a persistent identifier.
+    h. If `xxxx` is of the form `0111` then we are to read a BLAKE3 hash. To determine the length of the hash in bytes, read the next byte.
 
-Note: Any bytes not matching one of the above forms is to be considered an error.
+    Note: Any values undefined here are reserved. `1111` is expressly reserved for enabling future extensions.
+
+10. If *B* is of the form `0011xxxx`, then we are to read a cryptographic public key.
+
+    Note: These are currently undefined.
+
+11. If *B* is of the form `1000tttt`, then we are to read a tuple. Treat `tttt` as the length of the tuple. If `tttt` is `1111`, then read a byte/word for the length. Then, recursively decode the elements of the tuple.
+
+12. If *B* is of the form `1001xxxx`, then we are to read an array of numbers with a uniform type.
+
+    a. If `xxxx` is of the form `00tt`, then we are to read signed integers. If `tt` is `00`, then we are reading single byte signed integers. If `tt` is `01`, then we are reading two byte signed integers. If `tt` is `10`, then we are reading four byte signed integers. If `tt` is `11`, then we are reading eight byte signed integers.
+
+    b. If `xxxx` is of the form `01tt`, do the same as 7.a. except treat the integers as unsigned.
+
+    c. If `xxxx` is of the form `10tt`, do the same as 7.a. except treat the bytes as floating point numbers.
+
+    Next, read the following byte. If the byte's Most Significant Bit is a 0, treat the byte's value as the size of the array in terms of elements (i.e., 6 32-bit integers means a total of 24 bytes in the array). If the Most Significant Bit is a 1, read three more bytes treating them as an integer in little endian order. Shift the values right by 1 and use this as the length of the array. The maximum size is thus 2^31-1 (2,147,483,647).
+
+13. If *B* is of the form `1010tttt`, then we are to read a property list. Treat `tttt` as the length of the property list. If `tttt` is `1111`, then read a byte/word for the length. Then, recursively decode the elements of the property list.
