@@ -64,6 +64,52 @@
 (defn- decode-symbol [stream size]
   (symbol (decode-string stream size)))
 
+(defn- decode-byte [stream]
+  (read-byte stream))
+
+(defn- decode-bytes [num f]
+  (fn [stream]
+    (let [bytes (read-bytes stream num)
+          buffer (ByteBuffer/wrap bytes)]
+      (f (doto buffer (.order ByteOrder/LITTLE_ENDIAN))))))
+
+(def decode-short (decode-bytes 2 (fn [buf] (.getShort buf))))
+(def decode-int (decode-bytes 4 (fn [buf] (.getInt buf))))
+(def decode-long (decode-bytes 8 (fn [buf] (.getLong buf))))
+(def decode-float (decode-bytes 4 (fn [buf] (.getFloat buf))))
+(def decode-double (decode-bytes 8 (fn [buf] (.getDouble buf))))
+
+(defn- dispatch-number [stream mask]
+  (match-bits mask
+    ;; TODO: Right now we do the same thing for unsigned and signed, that's wrong.
+    %0_tt (case tt
+            0 (decode-byte stream)
+            1 (decode-short stream)
+            2 (decode-int stream)
+            3 (decode-long stream))
+    %10tt (case tt
+            0 (decode-byte stream)
+            1 (decode-short stream)
+            2 (decode-float stream)
+            3 (decode-double stream))
+    %11nn (throw (ex-info "Arbitrary precision numbers unsupported." {}))))
+
+(defn- decode-hash [type stream]
+  (let [hash-length (read-byte stream)]
+    [type (read-bytes stream hash-length)]))
+
+(defn- dispatch-hash [stream mask]
+  (case mask
+    0 (decode-hash :sha256 stream)
+    1 (decode-hash :sha512 stream)
+    2 (decode-hash :sha3 stream)
+    3 (decode-hash :keccak stream)
+    4 (decode-hash :blake2b stream)
+    5 (decode-hash :blake2s stream)
+    6 (decode-hash :blake2x stream)
+    7 (decode-hash :blake3 stream)
+    (throw (ex-info "Unexpected hash type." {}))))
+
 (defn- dispatch-tag [stream]
   (let [tag (read-byte stream)]
     (match-bits tag
@@ -73,7 +119,9 @@
       3 true
       
       %000001nn (decode-string stream nn)
-      %000010nn (decode-symbol stream nn))))
+      %000010nn (decode-symbol stream nn)
+      %0001xxxx (dispatch-number stream xxxx)
+      %0010xxxx (dispatch-hash stream xxxx))))
 
 (defn decode
   "Decodes the BUFFER into symbolic data."
