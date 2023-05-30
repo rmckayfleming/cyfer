@@ -1,108 +1,85 @@
 (ns cyfer.decoder
   (:require [clojure.java.io :as io :refer [file output-stream input-stream]]
             [clojure.string :as str]
-            [clojure.set :as set])
-  (:import [java.nio ByteBuffer]))
+            [clojure.set :as set]
+            [com.mckayfleming.match-bits :refer [match-bits]])
+  (:import [java.nio ByteBuffer ByteOrder]
+           [java.nio.charset StandardCharsets]
+           [java.io PushbackInputStream ]))
 
-(defn- pattern-variable-characters [pattern]
-  (set/difference (set (name pattern))
-                  #{\_ \0 \1 \%}))
+(defprotocol Stream
+  (read-byte [stream]
+    "Consumes and returns the next byte in the input stream, nil if there is nothing else.")
+  (peek-byte [stream]
+    "Returns the next byte in the input stream without consuming it, nil if there is nothing else.")
+  (read-bytes [stream n]
+    "Consumes and returns the next N bytes in the input stream. If there are less than N characters available, it will return just those characters.")
+  (peek-bytes [stream n]
+    "Returns the next N characters in the input stream without consuming them. If there are less than N characters available, it will return just those characters."))
 
-(defn- valid-pattern-variables? [pattern]
-  (let [pattern (name pattern)]
-    (every? (fn [char]
-              (= 1 (count (re-seq (re-pattern (str char "+")) pattern))))
-            (pattern-variable-characters pattern))))
+(extend-type PushbackInputStream
+  Stream
+  (read-byte [stream]
+    (let [next (.read stream)]
+      (if (neg? next)
+        nil
+        (byte next))))
+  (peek-byte [stream]
+    (let [next (.read stream)]
+      (if (neg? next)
+        nil
+        (do (.unread stream next)
+            (byte next)))))
+  (read-bytes [stream n]
+    (loop [n n
+           the-bytes []]
+      (if (= n 0)
+        (byte-array the-bytes)
+        (let [next (.read stream)]
+          (if (neg? next)
+            (byte-array the-bytes)
+            (recur (dec n) (conj the-bytes next)))))))
+  (peek-bytes [stream n]
+    (let [bytes (read-bytes stream n)]
+      (doseq [byte (reverse bytes)]
+        (.unread stream byte))
+      bytes)))
 
-(defn- throw-pattern-error! [pattern]
-  (when-not (or (number? pattern) (symbol? pattern))
-    (throw (ex-info (str "Bit patterns must be a literal number, or pattern symbol. Given '" pattern "'.") {})))
-  (when (symbol? pattern)
-    (when-not (re-matches #"%[a-zA-Z01_]+" (apply str (rest (name pattern))))
-      (throw (ex-info (str "Bit pattern symbols must start with a %, followed by the characters 0, 1, _, a-z, and A-Z. Given '" pattern "'.") {})))
-    (when-not (valid-pattern-variables? pattern)
-      (throw (ex-info (str "Bit pattern symbol variables must be contiguous (i.e. %aba is not allowed because a exists in two places). Given '" pattern "'.") {})))))
+(defn- decode-string [stream size]
+  (let [length-size (case size
+                      0 1
+                      1 2
+                      2 4
+                      3 8)
+        bytes (read-bytes stream length-size)
+        buffer (doto (ByteBuffer/wrap bytes)
+                 (.order ByteOrder/LITTLE_ENDIAN))
+        length (case size
+                 0 (.get buffer)
+                 1 (.getShort buffer)
+                 2 (.getInt buffer)
+                 3 (.getLong buffer))]
+    (String. (read-bytes stream length) StandardCharsets/UTF_8)))
 
-(defn- valid-pattern? [pattern]
-  (or (number? pattern)
-      (and (symbol? pattern)
-           (= \% (first (name pattern)))
-           (re-matches #"[a-zA-Z01_]+" (apply str (rest (name pattern))))
-           (valid-pattern-variables? pattern))))
+(defn- decode-symbol [stream size]
+  (symbol (decode-string stream size)))
 
-(defn- pattern-variable-mask [pattern char]
-  (-> (name pattern)
-      (str/replace (re-pattern (str "[^" char "]")) "0")
-      (str/replace (str char) "1")))
+(defn- dispatch-tag [stream]
+  (let [tag (read-byte stream)]
+    (match-bits tag
+      0 (recur stream)
+      1 nil
+      2 false
+      3 true
+      
+      %000001nn (decode-string stream nn)
+      %000010nn (decode-symbol stream nn))))
 
-(defn- pattern-variable-offset [pattern char]
-  (reduce (fn [offset char]
-            (if (= char \0)
-              (inc offset)
-              (reduced offset)))
-          0
-          (reverse (seq (pattern-variable-mask pattern char)))))
-
-(defn- pattern-variable->mask [pattern char]
-  (Long/parseUnsignedLong (pattern-variable-mask pattern char) 2))
-
-(defn- pattern-variable->symbol [pattern symbol-char]
-  (symbol (apply str (filter (fn [char] (= char symbol-char)) (seq (name pattern))))))
-
-(defn- pattern->mask [pattern]
-  (let [pattern (apply str (rest (name pattern)))]
-    (-> pattern 
-        (str/replace "0" "1")
-        (str/replace #"[^1]" "0")
-        (Long/parseUnsignedLong 2))))
-
-(defn- pattern->test [pattern]
-  (let [pattern (apply str (rest (name pattern)))]
-    (-> pattern
-        (str/replace #"[^01]" "0")
-        (Long/parseUnsignedLong 2))))
-
-(defn- has-pattern-variables? [pattern]
-  (not (empty? (pattern-variable-characters pattern))))
-
-(defn- match-bits-clause [test-var pattern-variable body]
-  (when-not (valid-pattern? pattern-variable)
-    (throw-pattern-error! pattern-variable))
-  (if (number? pattern-variable)
-    `((= ~pattern-variable ~test-var) ~body)
-    (let [pattern-binding (fn [mask offset]
-                            (if (not= offset 0)
-                              `(bit-shift-right (bit-and ~test-var ~mask) ~offset)
-                              `(bit-and ~test-var ~mask)))]
-      `((= (bit-and ~test-var ~(pattern->mask pattern-variable))
-           ~(pattern->test pattern-variable))
-        ~(if (has-pattern-variables? pattern-variable)
-           (let [pat-chars (pattern-variable-characters pattern-variable)
-                 pat-var-syms (map (partial pattern-variable->symbol pattern-variable) pat-chars)
-                 pat-var-masks (map (partial pattern-variable->mask pattern-variable) pat-chars)
-                 pat-var-offsets (map (partial pattern-variable-offset pattern-variable) pat-chars)
-                 pat-var-bindings (map pattern-binding pat-var-masks pat-var-offsets)
-                 bindings (interleave pat-var-syms pat-var-bindings)]
-             `(let [~@bindings]
-                ~body))
-           body)))))
-
-(defmacro match-bits
-  "Destructure a number by patterns of bits. Takes an expression that evaluates to a number,
-   followed by a series of pattern symbols and bodies. A pattern symbol starts with % and is followed
-   by a series of 0s, 1s, and other alphabetic characters. A pattern matches when the 0s and 1s match
-   the same positions in the number. The other positions in the number will be destructured and bound
-   to variables based on their character. For instance, 01aa01 will match 011001 and will bind the
-   symbol a to 10 in the case body. Alphabetic characters must be contiguous. 01a1a0 is illegal."
-  [num & clauses]
-  (let [test-var (gensym)
-        else-body (when (odd? (count clauses))
-                    (last clauses))
-        clauses (mapcat (fn [clause] (apply match-bits-clause test-var clause)) (partition 2 clauses))]
-    `(let [~test-var ~num]
-       (cond
-         ~@clauses
-         ~@(when else-body `(:else ~else-body))))))
+(defn decode
+  "Decodes the BUFFER into symbolic data."
+  [buffer]
+  (with-open [in (PushbackInputStream. (io/input-stream buffer))]
+    (dispatch-tag in)))
 
 ;; ;;; Atoms
 ;; (defn- atom? [byte] (not (bit-test byte 7))) ;; Atoms the high bit set to 0

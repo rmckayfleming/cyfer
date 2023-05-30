@@ -1,6 +1,7 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        instaparse/instaparse {:mvn/version "1.4.12"}}
+        instaparse/instaparse {:mvn/version "1.4.12"}
+        com.mckayfleming/match-bits {:mvn/version "1.1.1"}}
  :aliases
  {:dev
   {:extra-paths ["test"]
